@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import { Response } from "express";
@@ -26,6 +26,9 @@ export class AuthService {
     const userByEmail = await this.usersService.getOne({ email });
 
     if (!userByEmail) return null;
+    if (!userByEmail.hashedPassword) {
+      throw new BadRequestException("Probably you already have an account via google ");
+    }
 
     const isValidPw = await verify(userByEmail.hashedPassword, password);
 
@@ -54,5 +57,16 @@ export class AuthService {
     res.cookie("refreshToken", refreshToken, { httpOnly: true, secure: true });
 
     return accessToken;
+  }
+
+  async googleAuth(email: string, res: Response) {
+    const userByEmail = await this.usersService.getOne({ email });
+
+    if (userByEmail) {
+      return this.generateTokens(userByEmail.id, res);
+    }
+
+    const createdUser = await this.usersService.createOne({ email, hashedPassword: "" });
+    return this.generateTokens(createdUser.id, res);
   }
 }
