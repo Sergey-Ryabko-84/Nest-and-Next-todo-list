@@ -7,11 +7,17 @@ import {
 import { hash } from "argon2";
 import { User } from "@prisma/client";
 import { PrismaService } from "prisma/prisma.service";
+import { S3Service } from "src/services";
 import { CreateUserDto, GetUserDto, UpdateUserDto } from "./dto";
+import { ConfigService } from "@nestjs/config";
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly s3Service: S3Service,
+    private readonly configService: ConfigService
+  ) {}
   async createOne({ email, hashedPassword }: CreateUserDto) {
     const userByEmail = await this.prismaService.user.findUnique({ where: { email } });
 
@@ -28,7 +34,7 @@ export class UsersService {
     return this.prismaService.user.findFirst({ where: { id, email } });
   }
 
-  async updateOne(id: number, dto: UpdateUserDto) {
+  async updateOne(id: number, dto: UpdateUserDto, file: Express.Multer.File) {
     const user = await this.getOneOrThrow(id);
     const { email, password } = dto;
 
@@ -40,7 +46,25 @@ export class UsersService {
     let hashedPassword = user.hashedPassword;
     if (password) hashedPassword = await hash(password);
 
-    return this.prismaService.user.update({ where: { id }, data: { ...dto, hashedPassword } });
+    let avatarUrl = user.avatarUrl;
+
+    if (file) {
+      const imageHost = this.configService.getOrThrow("AWS_IMAGE_HOST");
+      const imageName = `${new Date().getTime()}-${file.originalname}`;
+      avatarUrl = `${imageHost}${imageName}`;
+
+      await this.s3Service.upload(imageName, file.buffer);
+
+      if (user.avatarUrl) {
+        const oldImageName = user.avatarUrl.replace(imageHost, "");
+        await this.s3Service.delete(oldImageName);
+      }
+    }
+
+    return this.prismaService.user.update({
+      where: { id },
+      data: { ...dto, hashedPassword, avatarUrl },
+    });
   }
 
   private async getOneOrThrow(id: number): Promise<User> {
